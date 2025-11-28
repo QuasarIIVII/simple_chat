@@ -1,6 +1,7 @@
 #ifndef QCHAT_TUI_HPP
 #define QCHAT_TUI_HPP
 
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <vector>
