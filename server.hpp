@@ -48,14 +48,15 @@ private:
 	static bool sendAll(int fd,const char *data,std::size_t len);
 
 	void processLine(ClientConn &c,const std::string &line);
-	void cmdSignup(ClientConn &c,const std::vector<std::string> &toks);
-	void cmdLogin(ClientConn &c,const std::vector<std::string> &toks);
-	void cmdMsgAll(ClientConn &c,const std::vector<std::string> &toks);
-	void cmdMsgTo(ClientConn &c,const std::vector<std::string> &toks);
-	void cmdChPass(ClientConn &c,const std::vector<std::string> &toks);
-	void cmdChHandle(ClientConn &c,const std::vector<std::string> &toks);
-	void cmdChName(ClientConn &c,const std::vector<std::string> &toks);
-	void cmdSetMulti(ClientConn &c,const std::vector<std::string> &toks);
+
+	void cmdSignup(ClientConn &c,const std::string &rest);
+	void cmdLogin(ClientConn &c,const std::string &rest);
+	void cmdMsgAll(ClientConn &c,const std::string &rest);
+	void cmdMsgTo(ClientConn &c,const std::string &rest);
+	void cmdChPass(ClientConn &c,const std::string &rest);
+	void cmdChHandle(ClientConn &c,const std::string &rest);
+	void cmdChName(ClientConn &c,const std::string &rest);
+	void cmdSetMulti(ClientConn &c,const std::string &rest);
 	void cmdHistory(ClientConn &c);
 	void cmdLogout(ClientConn &c);
 

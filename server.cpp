@@ -218,25 +218,37 @@ void Server::recordLogin(User &u,const std::string &ip) {
 }
 
 void Server::processLine(ClientConn &c,const std::string &line) {
-	auto toks=splitTokens(line,4);
-	if(toks.empty())return;
-	const std::string &cmd=toks[0];
+	std::string trimmed=trim(line);
+	if(trimmed.empty())return;
+
+	std::size_t sp=trimmed.find(' ');
+	std::string cmd;
+	std::string rest;
+
+	if(sp==std::string::npos){
+		cmd=trimmed;
+		rest.clear();
+	}else{
+		cmd=trimmed.substr(0,sp);
+		rest=trim(trimmed.substr(sp+1));
+	}
+
 	if(cmd=="SIGNUP"){
-		cmdSignup(c,toks);
+		cmdSignup(c,rest);
 	}else if(cmd=="LOGIN"){
-		cmdLogin(c,toks);
+		cmdLogin(c,rest);
 	}else if(cmd=="MSGALL"){
-		cmdMsgAll(c,toks);
+		cmdMsgAll(c,rest);
 	}else if(cmd=="MSGTO"){
-		cmdMsgTo(c,toks);
+		cmdMsgTo(c,rest);
 	}else if(cmd=="CHPASS"){
-		cmdChPass(c,toks);
+		cmdChPass(c,rest);
 	}else if(cmd=="CHHANDLE"){
-		cmdChHandle(c,toks);
+		cmdChHandle(c,rest);
 	}else if(cmd=="CHNAME"){
-		cmdChName(c,toks);
+		cmdChName(c,rest);
 	}else if(cmd=="SETMULTI"){
-		cmdSetMulti(c,toks);
+		cmdSetMulti(c,rest);
 	}else if(cmd=="HISTORY"){
 		cmdHistory(c);
 	}else if(cmd=="LOGOUT"){
@@ -248,18 +260,21 @@ void Server::processLine(ClientConn &c,const std::string &line) {
 	}
 }
 
-void Server::cmdSignup(ClientConn &c,const std::vector<std::string> &toks) {
+void Server::cmdSignup(ClientConn &c,const std::string &rest) {
 	if(c.loggedIn){
 		sendLine(c.fd,"ERR Already logged in");
 		return;
 	}
-	if(toks.size()<4u){
+	// rest = "handle password display_name(with spaces, unicode...)"
+	auto toks=splitTokens(rest,3); // [handle][password][display name...]
+	if(toks.size()<3u){
 		sendLine(c.fd,"ERR Usage: SIGNUP handle password display_name");
 		return;
 	}
-	const std::string &handle=toks[1];
-	const std::string &pw=toks[2];
-	const std::string &display=toks[3];
+	const std::string &handle=toks[0];
+	const std::string &pw=toks[1];
+	const std::string &display=toks[2];
+
 	if(!isValidHandle(handle)){
 		sendLine(c.fd,"ERR Invalid handle");
 		return;
@@ -268,25 +283,30 @@ void Server::cmdSignup(ClientConn &c,const std::vector<std::string> &toks) {
 		sendLine(c.fd,"ERR Handle already exists");
 		return;
 	}
+
 	User u{};
 	u.uid=db_.nextUid++;
 	u.handle=handle;
-	u.displayName=display;
+	u.displayName=display; // spaces & UTF-8 allowed
 	u.passwordHash=hashPassword(pw);
 	u.allowMultiLogin=false;
+
 	db_.uidByHandle[handle]=u.uid;
 	db_.usersById.emplace(u.uid,std::move(u));
 	saveDbIfPossible();
 	sendLine(c.fd,"OK Signup successful");
 }
 
-void Server::cmdLogin(ClientConn &c,const std::vector<std::string> &toks) {
-	if(toks.size()<3u){
+void Server::cmdLogin(ClientConn &c,const std::string &rest) {
+	// rest = "handle password"
+	auto toks=splitTokens(rest,3);
+	if(toks.size()<2u){
 		sendLine(c.fd,"ERR Usage: LOGIN handle password");
 		return;
 	}
-	const std::string &handle=toks[1];
-	const std::string &pw=toks[2];
+	const std::string &handle=toks[0];
+	const std::string &pw=toks[1];
+
 	User *u=findUserByHandle(handle);
 	if(u==nullptr){
 		sendLine(c.fd,"ERR No such user");
@@ -307,49 +327,68 @@ void Server::cmdLogin(ClientConn &c,const std::vector<std::string> &toks) {
 	c.loggedIn=true;
 	c.uid=u->uid;
 	c.handle=u->handle;
+
 	recordLogin(*u,c.peerIp);
 	saveDbIfPossible();
-	std::string msg="OK Login successful as "+u->handle;
-	sendLine(c.fd,msg);
-	std::string sys="SYS "+u->displayName+" joined chat as "+u->handle;
+
+	std::string ok="OK Login successful as "+u->displayName+" (@"+u->handle+")";
+	sendLine(c.fd,ok);
+
+	std::string sys="SYS "+u->displayName+" (@"+u->handle+") joined chat";
 	broadcast(sys,c.fd);
 }
 
-void Server::cmdMsgAll(ClientConn &c,const std::vector<std::string> &toks) {
+void Server::cmdMsgAll(ClientConn &c,const std::string &rest) {
 	if(!c.loggedIn){
 		sendLine(c.fd,"ERR Not logged in");
 		return;
 	}
-	if(toks.size()<2u){
+	if(rest.empty()){
 		sendLine(c.fd,"ERR Usage: MSGALL message");
 		return;
 	}
-	const std::string &text=toks[1];
-	std::string line="FROM "+c.handle+": "+text;
+
+	User *u=findUserById(c.uid);
+	if(u==nullptr){
+		sendLine(c.fd,"ERR Internal error");
+		return;
+	}
+
+	const std::string &text=rest; // full message with spaces & UTF-8
+	std::string line="FROM "+u->displayName+" (@"+u->handle+"): "+text;
 	broadcast(line,-1);
 }
 
-void Server::cmdMsgTo(ClientConn &c,const std::vector<std::string> &toks) {
+void Server::cmdMsgTo(ClientConn &c,const std::string &rest) {
 	if(!c.loggedIn){
 		sendLine(c.fd,"ERR Not logged in");
 		return;
 	}
-	if(toks.size()<3u){
+	// rest = "handle message..."
+	auto toks=splitTokens(rest,2); // [handle][message...]
+	if(toks.size()<2u){
 		sendLine(c.fd,"ERR Usage: MSGTO handle message");
 		return;
 	}
-	const std::string &dstHandle=toks[1];
-	const std::string &text=toks[2];
-	User *u=findUserByHandle(dstHandle);
-	if(u==nullptr){
+	const std::string &dstHandle=toks[0];
+	const std::string &text=toks[1];
+
+	User *dst=findUserByHandle(dstHandle);
+	if(dst==nullptr){
 		sendLine(c.fd,"ERR No such user");
 		return;
 	}
+	User *src=findUserById(c.uid);
+	if(src==nullptr){
+		sendLine(c.fd,"ERR Internal error");
+		return;
+	}
+
 	bool sent=false;
 	for(auto &kv:clients_){
 		ClientConn &other=kv.second;
-		if(other.loggedIn && other.uid==u->uid){
-			std::string line="PRIVATE from "+c.handle+": "+text;
+		if(other.loggedIn && other.uid==dst->uid){
+			std::string line="PRIVATE from "+src->displayName+" (@"+src->handle+"): "+text;
 			sendLine(other.fd,line);
 			sent=true;
 		}
@@ -361,17 +400,19 @@ void Server::cmdMsgTo(ClientConn &c,const std::vector<std::string> &toks) {
 	}
 }
 
-void Server::cmdChPass(ClientConn &c,const std::vector<std::string> &toks) {
+void Server::cmdChPass(ClientConn &c,const std::string &rest) {
 	if(!c.loggedIn){
 		sendLine(c.fd,"ERR Not logged in");
 		return;
 	}
-	if(toks.size()<3u){
+	auto toks=splitTokens(rest,3); // old, new
+	if(toks.size()<2u){
 		sendLine(c.fd,"ERR Usage: CHPASS old new");
 		return;
 	}
-	const std::string &oldPw=toks[1];
-	const std::string &newPw=toks[2];
+	const std::string &oldPw=toks[0];
+	const std::string &newPw=toks[1];
+
 	User *u=findUserById(c.uid);
 	if(u==nullptr){
 		sendLine(c.fd,"ERR Internal error");
@@ -386,16 +427,18 @@ void Server::cmdChPass(ClientConn &c,const std::vector<std::string> &toks) {
 	sendLine(c.fd,"OK Password changed");
 }
 
-void Server::cmdChHandle(ClientConn &c,const std::vector<std::string> &toks) {
+void Server::cmdChHandle(ClientConn &c,const std::string &rest) {
 	if(!c.loggedIn){
 		sendLine(c.fd,"ERR Not logged in");
 		return;
 	}
-	if(toks.size()<2u){
+	auto toks=splitTokens(rest,2); // new_handle
+	if(toks.empty()){
 		sendLine(c.fd,"ERR Usage: CHHANDLE new_handle");
 		return;
 	}
-	const std::string &newHandle=toks[1];
+	const std::string &newHandle=toks[0];
+
 	if(!isValidHandle(newHandle)){
 		sendLine(c.fd,"ERR Invalid handle");
 		return;
@@ -417,36 +460,37 @@ void Server::cmdChHandle(ClientConn &c,const std::vector<std::string> &toks) {
 	sendLine(c.fd,"OK Handle changed");
 }
 
-void Server::cmdChName(ClientConn &c,const std::vector<std::string> &toks) {
+void Server::cmdChName(ClientConn &c,const std::string &rest) {
 	if(!c.loggedIn){
 		sendLine(c.fd,"ERR Not logged in");
 		return;
 	}
-	if(toks.size()<2u){
+	if(rest.empty()){
 		sendLine(c.fd,"ERR Usage: CHNAME display_name");
 		return;
 	}
-	const std::string &name=toks[1];
 	User *u=findUserById(c.uid);
 	if(u==nullptr){
 		sendLine(c.fd,"ERR Internal error");
 		return;
 	}
-	u->displayName=name;
+	u->displayName=rest; // full string, spaces, UTF-8 allowed
 	saveDbIfPossible();
 	sendLine(c.fd,"OK Display name changed");
 }
 
-void Server::cmdSetMulti(ClientConn &c,const std::vector<std::string> &toks) {
+void Server::cmdSetMulti(ClientConn &c,const std::string &rest) {
 	if(!c.loggedIn){
 		sendLine(c.fd,"ERR Not logged in");
 		return;
 	}
-	if(toks.size()<2u){
+	auto toks=splitTokens(rest,2);
+	if(toks.empty()){
 		sendLine(c.fd,"ERR Usage: SETMULTI 0|1");
 		return;
 	}
-	const std::string &v=toks[1];
+	const std::string &v=toks[0];
+
 	User *u=findUserById(c.uid);
 	if(u==nullptr){
 		sendLine(c.fd,"ERR Internal error");

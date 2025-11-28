@@ -282,16 +282,59 @@ void Tui::handleChat(const std::string &text) {
 void Tui::handleCommand(const std::string &cmdLine) {
 	std::string s=trimLocal(cmdLine);
 	if(s.empty())return;
+
+	// Extract command word (first token)
+	std::size_t sp=s.find(' ');
+	std::string cmd;
+	if(sp==std::string::npos)cmd=s;
+	else cmd=s.substr(0,sp);
+
+	// normalize short commands by checking both cases
+	if(cmd=="all" || cmd=="ALL"){
+		// /all <message with spaces, unicode>
+		if(sp==std::string::npos || sp+1>=s.size()){
+			addLocalMessage("Usage: /all message");
+			return;
+		}
+		std::string msg=s.substr(sp+1); // keep as-is
+		if(client_!=nullptr)client_->sendLine("MSGALL "+msg);
+		return;
+	}
+
+	if(cmd=="to" || cmd=="TO"){
+		// /to <handle> <message with spaces, unicode>
+		if(sp==std::string::npos){
+			addLocalMessage("Usage: /to handle message");
+			return;
+		}
+		std::size_t sp2=s.find(' ',sp+1);
+		if(sp2==std::string::npos || sp2+1>=s.size()){
+			addLocalMessage("Usage: /to handle message");
+			return;
+		}
+		std::string handle=s.substr(sp+1,sp2-sp-1);
+		std::string msg=s.substr(sp2+1);
+		if(handle.empty()){
+			addLocalMessage("Usage: /to handle message");
+			return;
+		}
+		if(client_!=nullptr)client_->sendLine("MSGTO "+handle+" "+msg);
+		return;
+	}
+
+	// For the rest, token-based parsing is fine
 	auto toks=splitTokens(s,4);
 	if(toks.empty())return;
-	const std::string &cmd=toks[0];
+	cmd=toks[0];
 
 	if(cmd=="signup" || cmd=="SIGNUP"){
 		if(toks.size()<4u){
 			addLocalMessage("Usage: /signup handle password display_name");
 			return;
 		}
-		client_->sendLine("SIGNUP "+toks[1]+" "+toks[2]+" "+toks[3]);
+		if(client_!=nullptr){
+			client_->sendLine("SIGNUP "+toks[1]+" "+toks[2]+" "+toks[3]);
+		}
 		return;
 	}
 	if(cmd=="login" || cmd=="LOGIN"){
@@ -299,23 +342,9 @@ void Tui::handleCommand(const std::string &cmdLine) {
 			addLocalMessage("Usage: /login handle password");
 			return;
 		}
-		client_->sendLine("LOGIN "+toks[1]+" "+toks[2]);
-		return;
-	}
-	if(cmd=="all" || cmd=="ALL"){
-		if(toks.size()<2u){
-			addLocalMessage("Usage: /all message");
-			return;
+		if(client_!=nullptr){
+			client_->sendLine("LOGIN "+toks[1]+" "+toks[2]);
 		}
-		client_->sendLine("MSGALL "+toks[1]);
-		return;
-	}
-	if(cmd=="to" || cmd=="TO"){
-		if(toks.size()<3u){
-			addLocalMessage("Usage: /to handle message");
-			return;
-		}
-		client_->sendLine("MSGTO "+toks[1]+" "+toks[2]);
 		return;
 	}
 	if(cmd=="chpass" || cmd=="CHPASS"){
@@ -323,7 +352,9 @@ void Tui::handleCommand(const std::string &cmdLine) {
 			addLocalMessage("Usage: /chpass old new");
 			return;
 		}
-		client_->sendLine("CHPASS "+toks[1]+" "+toks[2]);
+		if(client_!=nullptr){
+			client_->sendLine("CHPASS "+toks[1]+" "+toks[2]);
+		}
 		return;
 	}
 	if(cmd=="chhandle" || cmd=="CHHANDLE"){
@@ -331,7 +362,9 @@ void Tui::handleCommand(const std::string &cmdLine) {
 			addLocalMessage("Usage: /chhandle new_handle");
 			return;
 		}
-		client_->sendLine("CHHANDLE "+toks[1]);
+		if(client_!=nullptr){
+			client_->sendLine("CHHANDLE "+toks[1]);
+		}
 		return;
 	}
 	if(cmd=="chname" || cmd=="CHNAME"){
@@ -339,7 +372,10 @@ void Tui::handleCommand(const std::string &cmdLine) {
 			addLocalMessage("Usage: /chname display_name");
 			return;
 		}
-		client_->sendLine("CHNAME "+toks[1]);
+		if(client_!=nullptr){
+			// toks[1] is full remainder; may contain spaces and UTF-8
+			client_->sendLine("CHNAME "+toks[1]);
+		}
 		return;
 	}
 	if(cmd=="setmulti" || cmd=="SETMULTI"){
@@ -347,19 +383,27 @@ void Tui::handleCommand(const std::string &cmdLine) {
 			addLocalMessage("Usage: /setmulti 0|1");
 			return;
 		}
-		client_->sendLine("SETMULTI "+toks[1]);
+		if(client_!=nullptr){
+			client_->sendLine("SETMULTI "+toks[1]);
+		}
 		return;
 	}
 	if(cmd=="history" || cmd=="HISTORY"){
-		client_->sendLine("HISTORY");
+		if(client_!=nullptr){
+			client_->sendLine("HISTORY");
+		}
 		return;
 	}
 	if(cmd=="logout" || cmd=="LOGOUT"){
-		client_->sendLine("LOGOUT");
+		if(client_!=nullptr){
+			client_->sendLine("LOGOUT");
+		}
 		return;
 	}
 	if(cmd=="quit" || cmd=="exit" || cmd=="QUIT" || cmd=="EXIT"){
-		if(client_!=nullptr)client_->sendLine("QUIT");
+		if(client_!=nullptr){
+			client_->sendLine("QUIT");
+		}
 		running_=false;
 		return;
 	}
